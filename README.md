@@ -1,6 +1,8 @@
 # 🚀 Agentic Tutor — Adaptive Multi-Agent Teaching System for Linear Algebra  
 ### *Capstone Project — Generative & Agentic AI (DS246)*  
-**Authors:** *Your Names & Roll Numbers*
+
+**Authors:** *Kasa Pavan (26738)*  
+**Co-Authors:** *Boddu Amarnanth, Chandan Rai*
 
 ---
 
