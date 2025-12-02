@@ -259,7 +259,7 @@ pytest backend/tests
 ## 📄 License
 
 MIT License — 2025  
-*Team Members*
+*Kasa Pavan , Boddu Amarnath , Chandan Rai*
 
 ---
 
