@@ -1,83 +1,73 @@
----
-
-# 🚀 **Agentic Tutor — Adaptive Multi-Agent Teaching System for Linear Algebra**
-
-### *Capstone Project — Generative & Agentic AI (DS246)*
-
-**Authors:** *Kasa Pavan & 26738*
-
-**Co-Authors:** * Boddu Amarnanth & Chandan Rai*
+# 🚀 Agentic Tutor — Adaptive Multi-Agent Teaching System for Linear Algebra  
+### *Capstone Project — Generative & Agentic AI (DS246)*  
+**Authors:** *Your Names & Roll Numbers*
 
 ---
 
 ## 📌 Overview
 
-**Agentic Tutor** is a fully autonomous, multi-agent teaching system for university-level **Linear Algebra**, built using:
+**Agentic Tutor** is a fully autonomous, multi-agent educational system that teaches, evaluates, and guides students through university-level **Linear Algebra**.
 
-* **FastAPI** backend
-* **Streamlit** frontend
-* **LangGraph Orchestrator** for agent workflows
-* **LLM Agents** (Tutor, Evaluator, Monitor)
-* **RAG (Retrieval-Augmented Generation)** with FAISS
-* **SymPy** for symbolic grading
-* **Student modelling** with mastery tracking
-* **Dynamic lesson planning**
-* **Automated remediation and progression decisions**
+The system integrates:
 
-The system simulates a complete tutoring workflow:
+- **FastAPI backend**  
+- **Streamlit frontend**  
+- **LangGraph Orchestrator**  
+- **Three LLM-based agents**  
+  - 👨‍🏫 Tutor Agent  
+  - 🧠 Evaluator Agent  
+  - 🔍 Monitor Agent  
+- **RAG (Retrieval-Augmented Generation)** using FAISS  
+- **SymPy** for symbolic math grading  
+- **Mastery tracking + personalized remediation**
 
-**Tutor → Student → Evaluator → Monitor → Tutor (loop)**
-with each step guided by an **LLM agent prompt**, RAG context, and student performance data.
+This creates an adaptive loop:
+
+```
+Tutor → Student → Evaluator → Monitor → Tutor (next lesson)
+```
 
 ---
 
 ## 🧩 System Architecture
 
-### 🔹 **1. Tutor Agent**
+### 🔹 1. **Tutor Agent**
+- Generates structured lesson plans.
+- Writes explanations using RAG-enriched embedded context.
+- Produces micro-checks, practice tasks, and post-evaluation specifications.
+- Adapts tone and style to student preferences.
 
-* Generates a structured lesson plan (intro → example → micro-check → practice → post-eval).
-* Integrates **embedded curriculum context** from the RAG pipeline.
-* Produces clean LaTeX-renderable content for the frontend.
-* Adapts lesson style based on student preferences (visual, procedural, etc.).
+### 🔹 2. **Evaluator Agent**
+- Generates conceptual, procedural, application, geometric, and open-ended questions.
+- Uses SymPy to verify symbolic answers.
+- Grades using rubrics and produces misconceptions + feedback.
+- Returns strictly-structured JSON.
 
-### 🔹 **2. Evaluator Agent**
+### 🔹 3. **Monitor Agent**
+- Interprets evaluator results + student profile.
+- Decides:
+  - advance  
+  - practice  
+  - remedial  
+  - escalate  
+- Generates remediation plan + teacher-facing note.
 
-* Generates **high-quality evaluation questions** (conceptual, procedural, application, geometric, open-ended).
-* Strict JSON output for machine parsing.
-* Uses embedded_context + Tavily search implicitly.
-* Grades student answers using:
+### 🔹 4. **RAG (FAISS Vector Store)**
+- Embeds curriculum text using MiniLM-L6-v2.
+- Supplies topic-specific context back to the agents.
 
-  * **RAG context**
-  * **SymPy symbolic correctness**
-  * **Marking rubrics**
-
-### 🔹 **3. Monitor Agent**
-
-* Analyzes evaluator output + student profile.
-* Makes decisions:
-
-  * `allow_advance`
-  * `remediation_plan`
-  * `escalate`
-* Uses mastery thresholds and risk profiles to adapt next steps.
-
-### 🔹 **4. RAG Pipeline**
-
-* Vector embeddings via **HuggingFace all-MiniLM-L6-v2**
-* Curriculum stored as FAISS index
-* Backend performs semantic retrieval per topic
-
-### 🔹 **5. LangGraph Orchestrator**
-
-Handles full autonomous workflow:
+### 🔹 5. **LangGraph Orchestrator**
+Handles entire workflow:
 
 ```
-Start Session → Tutor Plan → Evaluator Questions → Grade → Monitor → Next Step
+start_session → tutor → evaluator → sympy_grader → monitor → update_state
 ```
+
+All state remains inside a **session graph thread** for continuity.
 
 ---
 
-## 📁 Project Structure
+## 📁 Folder Structure
 
 ```
 agentic-tutor/
@@ -129,7 +119,7 @@ agentic-tutor/
 
 ## ⚙️ Installation & Setup
 
-### 1️⃣ Clone the Repository
+### 1️⃣ Clone the repository
 
 ```bash
 git clone https://github.com/your-org/agentic-tutor.git
@@ -140,27 +130,26 @@ cd agentic-tutor
 
 ## 🖥️ Backend Setup (FastAPI)
 
-### 2️⃣ Create Python Environment
+### 2️⃣ Create virtual environment
 
 ```bash
 python -m venv agent
-source agent/bin/activate    # Linux / macOS
-agent\Scripts\activate       # Windows
+agent\Scripts\activate   # Windows
 ```
 
-### 3️⃣ Install Dependencies
+### 3️⃣ Install dependencies
 
 ```bash
 pip install -r backend/requirements.txt
 ```
 
-### 4️⃣ Run Backend Server
+### 4️⃣ Run backend
 
 ```bash
 uvicorn backend.app.main:app --reload --port 5005
 ```
 
-API will be available at:
+Backend runs at:
 
 ```
 http://127.0.0.1:5005
@@ -170,21 +159,19 @@ http://127.0.0.1:5005
 
 ## 🎨 Frontend Setup (Streamlit)
 
-### 1️⃣ Install frontend dependencies
-
-(Same environment is used)
+### Install Streamlit:
 
 ```bash
 pip install streamlit plotly reportlab
 ```
 
-### 2️⃣ Run Streamlit App
+### Run the UI:
 
 ```bash
 streamlit run frontend/app.py
 ```
 
-Frontend opens at:
+Frontend runs at:
 
 ```
 http://localhost:8501
@@ -192,138 +179,82 @@ http://localhost:8501
 
 ---
 
-## 🔄 Complete System Flow
+## 🔄 Full Learning Loop
 
-### **1. Start Session**
+### 1. **Tutor Agent**
+Creates lesson plan → Intro, Example, Micro-check, Practice, Post-Eval.
 
-The user selects:
+### 2. **Evaluator Agent**
+Produces questions → Student submits → SymPy verifies → Scores & feedback returned.
 
-* Student ID
-* Topic
+### 3. **Monitor Agent**
+Interprets student results → Generates:
 
-Frontend → `POST /api/session/start`
-Orchestrator boots → RAG retrieves → Tutor agent generates lesson.
+- remediation steps  
+- accelerate suggestion  
+- allow_advance true/false  
+- possible escalation  
 
----
+### 4. **State Dashboard**
+Frontend shows:
 
-### **2. Student Answers Evaluation Questions**
-
-Student submits answers → SymPy verifies → Evaluator grades → Monitor decides next action.
-
----
-
-### **3. Dashboard Visualization**
-
-Includes:
-
-* Mastery radar chart
-* Misconception log
-* Topic graph
-* Session timeline
-
-All updated LIVE using API state.
-
----
-
-## 📊 Key Features
-
-### ✅ Multi-Agent Autonomous Teaching
-
-Tutor, Evaluator, Monitor collaborate via LangGraph.
-
-### ✅ Real-time Lesson Adaptation
-
-Based on mastery, misconceptions, confidence, and history.
-
-### ✅ Mathematical Rendering
-
-LaTeX rendering inside Streamlit.
-
-### ✅ Symbolic Grading via SymPy
-
-Ensures mathematically correct evaluation.
-
-### ✅ RAG Curriculum Integration
-
-Semantic retrieval **per topic** → cleaner explanations & applied questions.
-
-### ✅ Full Student Model
-
-Mastery maps updated across:
-
-* Conceptual
-* Procedural
-* Application
-* Open-ended reasoning
-
-### ✅ PDF Export of Student Profile
-
-Auto-generated with ReportLab.
-
----
-
-## 🧪 Testing
-
-Unit tests located in:
-
-```
-backend/tests/
-```
-
-Run with:
-
-```bash
-pytest
-```
+- Mastery radar  
+- Misconceptions log  
+- Topic graph  
+- Evaluation results  
+- Session timeline  
 
 ---
 
 ## 🔐 Environment Variables
 
-Add in `.env` (backend root):
+Create `.env` inside `backend/app/`:
 
 ```
-GROQ_API_KEY=your_key
-TAVILY_API_KEY=your_key
+GROQ_API_KEY=your_groq_key
+TAVILY_API_KEY=your_tavily_key
 ```
 
 ---
 
-## 🚀 Future Enhancements
+## 📊 Key Features
 
-* Full database persistence (PostgreSQL)
-* Multi-course expansion
-* Interactive geometric visualizer for eigenvectors
-* GPT-4o or local LLM drop-in support
-* Student performance forecasting models
+- ✔️ Autonomous multi-agent teaching system  
+- ✔️ RAG-powered lesson personalization  
+- ✔️ Strict JSON-safe LLM prompting  
+- ✔️ Procedural math validation with SymPy  
+- ✔️ Continuous mastery-based adaptation  
+- ✔️ PDF export for student profile  
+- ✔️ Visualization dashboards (radar, heatmap, timeline)  
+- ✔️ Fully decoupled frontend ↔ backend architecture  
 
 ---
 
-## 🤝 Contributing
+## 🧪 Testing
 
-Pull requests are welcome!
-Before submitting:
+```bash
+pytest backend/tests
+```
 
-* Run tests
-* Format with `black`
-* Follow JSON schema constraints
+---
+
+## 🛣️ Future Enhancements
+
+- Database persistence (PostgreSQL)
+- Multi-course support (Calculus, Algebra II)
+- Rich 3D geometric visualization (eigenvectors, transformations)
+- Multi-student analytics dashboard
+- Better long-term memory using structured embeddings
 
 ---
 
 ## 📄 License
 
-MIT License © 2025 – Your Team
+MIT License — 2025  
+*Team Members*
 
 ---
 
-## 🏁 Final Notes
-
-This project demonstrates:
-
-* Agentic AI system design
-* Multi-agent orchestration
-* RAG-powered pedagogy
-* Automated grading
-* Adaptive tutoring loops
-
-It is designed for academic demonstration and future scalability.
+## 🙌 Acknowledgements  
+Developed as part of **Generative & Agentic AI (DS246)**  
+Indian Institute of Science
