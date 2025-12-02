@@ -121,9 +121,15 @@ agentic-tutor/
 
 ## ⚙️ Installation & Setup
 
+## Create Virtual Conda Environment 
+```bash
+conda create -p agenti python==3.11 -y 
+```
+
 ### 1️⃣ Clone the repository
 
 ```bash
+conda activate agent/
 git clone https://github.com/your-org/agentic-tutor.git
 cd agentic-tutor
 ```
