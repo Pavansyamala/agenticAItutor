@@ -6,11 +6,13 @@ from backend.app.agents.base_agent import BaseAgent
 from backend.app.core.llm_client import LLMClient
 from backend.app.database.session import get_session
 from backend.app.database.models import StudentProfile, Event
+from backend.app.agents.agent_prompts.monitor_prompt import monitor_prompt
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+from dotenv import load_dotenv
 
-PROMPT_PATH = Path(__file__).resolve().parent / "agent_prompts" / "monitor_prompt.txt"
+load_dotenv()
 
 def _compute_risk_score(recent_scores: list, confidence_gap: float = 0.0) -> float:
     """
@@ -38,11 +40,12 @@ def _compute_risk_score(recent_scores: list, confidence_gap: float = 0.0) -> flo
     return min(1.0, combined)
 
 class MonitorAgent(BaseAgent):
-    def __init__(self, name: str = "monitor", model: str = "openai/gpt-oss-20b"):
+    def __init__(self, name: str = "monitor", model: str = "llama-3.1-8b-instant"):
         super().__init__(name)
         # LLMClient optional: used to write nicer remediation text
         self.llm = LLMClient(model=model) 
-        self.template = PROMPT_PATH.read_text(encoding="utf-8") if PROMPT_PATH.exists() else None
+        self.template = monitor_prompt
+        print(monitor_prompt)
 
     async def _generate_remediation_with_llm(self, payload: Dict[str,Any]) -> Dict[str,Any]:
         """
@@ -50,7 +53,7 @@ class MonitorAgent(BaseAgent):
         If LLM unavailable/fails, fallback to rule-based remediation.
         """
         try:
-            system_prompt = self.template or "System: produce remediation plan."
+            system_prompt = self.template 
             user_prompt = json.dumps(payload, ensure_ascii=False)
             raw = await self.llm.chat(system_prompt=system_prompt, user_prompt=user_prompt)
             # raw should be JSON (enforced by template)
@@ -58,6 +61,8 @@ class MonitorAgent(BaseAgent):
             return out
         except Exception:
             return {}
+    
+
 
     async def run(self, goal: str, context: Dict[str,Any]) -> Dict[str,Any]:
         """
@@ -173,19 +178,19 @@ class MonitorAgent(BaseAgent):
             # fallback: rule-based plan
             if not plan:
                 plan = {
-                    "allow_advance": False,
-                    "remediation_plan": {
-                        "action": "remedial",
-                        "steps": [
-                            "Revise the core definition and relationships for the topic (read a focused summary).",
-                            "Work through 3 targeted practice problems with step annotations.",
-                            "Attempt a multi-representation exercise (algebraic + geometric) and check intermediate steps."
-                        ],
-                        "recommended_tutor_mode": "revision"
-                    },
-                    "escalate": escalate,
-                    "notes_for_teacher": "Student shows weakness in the topic; recommend human review if no improvement after remediation."
-                }
+                                "allow_advance": False,
+                                "remediation_plan": {
+                                    "action": "remedial",
+                                    "steps": [
+                                        "Revise core definition...",
+                                        "Work through 3 targeted practice problems.",
+                                        "Attempt multi-representation exercise."
+                                    ],
+                                    "recommended_tutor_mode": "revision"
+                                },
+                                "escalate": bool(escalate),
+                                "notes_for_teacher": "Student needs reinforcement."
+                            }
             remediation_plan = plan.get("remediation_plan") or plan.get("remediation") or plan
 
         # update profile: mastery_map and history
@@ -223,7 +228,7 @@ class MonitorAgent(BaseAgent):
             "allow_advance": allow,
             "remediation_plan": remediation_plan,
             "escalate": escalate,
-            "notes": ""
+            "notes_for_teacher": ""
         })
         session.add(ev)
         session.commit()
@@ -231,9 +236,9 @@ class MonitorAgent(BaseAgent):
 
         # Format final decision
         final_decision = {
-            "allow_advance": allow,
-            "remediation_plan": remediation_plan,
-            "escalate": escalate,
-            "notes": plan.get("notes_for_teacher") if isinstance(plan, dict) else ""
+            "allow_advance": bool(allow),
+            "remediation_plan": remediation_plan if not allow else None,
+            "escalate": bool(escalate),
+            "notes_for_teacher": plan.get("notes_for_teacher") if isinstance(plan, dict) else ""
         }
         return final_decision

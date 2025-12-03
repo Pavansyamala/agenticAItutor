@@ -32,6 +32,7 @@ class Student(SQLModel, table=True):
     # renamed to avoid shadowing SQLModel.metadata
     extra_data: Dict[str, Any] = json_field(default={})
 
+
 class StudentProfile(SQLModel, table=True):
     student_id: str = Field(primary_key=True, foreign_key="student.student_id")
     mastery_map: Dict[str, float] = json_field(default={})
@@ -39,6 +40,10 @@ class StudentProfile(SQLModel, table=True):
     learning_preferences: Dict[str, Any] = json_field(default={})
     risk_score: float = Field(default=0.0)
     history: List[Dict[str, Any]] = json_field(default=[])
+    
+    # ADD THIS LINE - THIS WAS MISSING!
+    misconceptions: List[str] = Field(default_factory=list, sa_type=JSON)
+
     last_updated: datetime = Field(default_factory=datetime.utcnow)
 
 class Evaluation(SQLModel, table=True):

@@ -3,6 +3,9 @@ import os
 from typing import Any
 from openai import OpenAI, AsyncOpenAI
 from openai import APIError, RateLimitError, AuthenticationError
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class LLMClient:
@@ -11,10 +14,10 @@ class LLMClient:
     Forces STRICT JSON output using the official `response_format={"type": "json_object"}`.
     """
 
-    def __init__(self, model: str = "gpt-oss-20b"):
+    def __init__(self, model: str = "llama-3.1-8b-instant"):
         self.model = model
 
-        api_key = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             raise ValueError("GROQ_API_KEY (or OPENAI_API_KEY) environment variable is required.")
 

@@ -5,8 +5,11 @@ from backend.app.agents.base_agent import BaseAgent
 from backend.app.core.llm_client import LLMClient
 from pathlib import Path
 import asyncio
+from backend.app.agents.agent_prompts.tutor_prompt import tutor_prompt
+from dotenv import load_dotenv
 
-PROMPT_PATH = Path(__file__).resolve().parent / "agent_prompts" / "tutor_prompt.txt"
+load_dotenv()
+
 
 class TutorAgent(BaseAgent):
     """
@@ -15,15 +18,11 @@ class TutorAgent(BaseAgent):
     fills it with the context, and asks the LLM for a JSON response.
     """
 
-    def __init__(self, name: str = "tutor", model: str = "openai/gpt-oss-20b"):
+    def __init__(self, name: str = "tutor", model: str = "openai/gpt-oss-120b"):
         super().__init__(name)
         self.llm = LLMClient(model=model)
         # Load template once
-        if PROMPT_PATH.exists():
-            self.template = PROMPT_PATH.read_text(encoding="utf-8")
-        else:
-            # fallback minimal template
-            self.template = "System: You are Tutor Agent. Goal: {goal} Context: {context}"
+        self.template = tutor_prompt
 
     async def run(self, goal: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -37,18 +36,6 @@ class TutorAgent(BaseAgent):
             target_mastery = gp.get("target_mastery", 0.8)
             student_id = context.get("context", {}).get("student_id") or gp.get("student_id")
             student_profile = context.get("context", {}).get("student_profile") or gp.get("student_profile", {})
-
-            # Prepare the user prompt JSON body to fill template
-            # user_input = json.dumps({
-            #     "student_id": str(student_id),
-            #     "topic": topic,
-            #     "student_profile": student_profile,
-            #     "target_mastery": target_mastery,
-            #     "constraints": gp.get("constraints", {"max_lesson_minutes": 15})
-            # }, ensure_ascii=False)
-
-            # Use the template as "system" content and the user_input as "user" content
-            # If the template contains placeholders, we keep as-is and instruct model to read user_input
             payload = {
                     "student_id": student_id,
                     "topic": topic,

@@ -14,4 +14,11 @@ class MonitorService:
 
     @staticmethod
     def parse_decision(raw: Dict[str, Any]) -> MonitorDecision:
+        print(raw)
+        print("I am printed...")
+        raw.setdefault("allow_advance", raw.get("next_action", "") == "remediation")
+        raw.setdefault("confidence", 0.75)
+        raw.setdefault("remediation_plan", None)
+        raw.setdefault("notes_for_teacher", "")
+
         return MonitorDecision(**raw)

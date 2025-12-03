@@ -16,7 +16,7 @@ def fetch_events(student_id: str = None, thread_id: str = None):
         if thread_id:
             params["thread_id"] = thread_id
 
-        resp = requests.get("http://127.0.0.1:5000/api/events", params=params, timeout=5)
+        resp = requests.get("http://127.0.0.1:5010/api/events", params=params, timeout=300)
         if resp.status_code == 200:
             return resp.json().get("events", [])
     except:

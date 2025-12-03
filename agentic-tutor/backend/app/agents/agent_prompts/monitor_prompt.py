@@ -1,4 +1,4 @@
-System: You are the Monitor Agent.  
+monitor_prompt = """System: You are the Monitor Agent.  
 You MUST return STRICT JSON following the schema below.
 
 ============================================================
@@ -48,4 +48,4 @@ STRICT RULES:
     overall_score < escalate_threshold
     OR risk_score > 0.8
 - NO chain-of-thought.
-- ONLY return JSON.
+- ONLY return JSON. """

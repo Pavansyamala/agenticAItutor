@@ -1,283 +1,193 @@
 # frontend/app.py
 import streamlit as st
 from pathlib import Path
+import sys
+import os
+import time
+import json
+from io import BytesIO
 
-import os, sys
-print("CWD:", os.getcwd())
-print("PATH:", sys.path)
+# Add project root to path
+CURRENT_DIR = Path(__file__).parent
+PROJECT_ROOT = CURRENT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# ABSOLUTE PATH OF CURRENT FILE
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# PARENT: agentic-tutor/
-PARENT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
-
-if PARENT_DIR not in sys.path:
-    sys.path.insert(0, PARENT_DIR)
-
-print(">> Added to PATH:", PARENT_DIR)
-print(">> sys.path:", sys.path[:3])
-
-
-# Now imports work perfectly
-from frontend.utils.api_client import APIClient  
+from frontend.utils.api_client import APIClient
 from components.topic_graph import render_topic_graph
 from components.progress_radar import render_radar
 from components.misconception_log import render_misconceptions
 from components.session_timeline import render_timeline
 
-# Page config
 st.set_page_config(page_title="Adaptive Linear Algebra Tutor", layout="wide", initial_sidebar_state="expanded")
-
-# Title with your names and IDs — exactly as in your document
-st.title("Adaptive Agentic Teaching Assistant for Linear Algebra")
-st.markdown("""  
-**Course: Generative and Agentic AI (DS246) — Capstone Project**
-""")
+st.title("Adaptive Agentic Teaching Assistant")
+st.markdown("**DS246 — Generative & Agentic AI | IISc Bangalore**")
 
 API = APIClient()
 
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
+# ========================
+# Session State Init
+# ========================
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = None
+if "student_id" not in st.session_state:
+    st.session_state.student_id = "26738"
+if "answers" not in st.session_state:
+    st.session_state.answers = {}
+if "last_result" not in st.session_state:
+    st.session_state.last_result = None
 
-def export_profile_pdf(profile, filename="student_profile.pdf"):
-    pdf_path = f"/tmp/{filename}"
-    c = canvas.Canvas(pdf_path, pagesize=letter)
-    c.setFont("Helvetica", 12)
-
-    c.drawString(50, 750, "Student Profile Report")
-    y = 720
-
-    for k,v in profile.items():
-        if k == "mastery_map":
-            c.drawString(50, y, "Mastery Map:")
-            y -= 20
-            for topic,score in v.items():
-                c.drawString(70, y, f"{topic}: {score:.2f}")
-                y -= 15
-        elif k == "misconceptions":
-            c.drawString(50, y, "Misconceptions:")
-            y -= 20
-            for m in v:
-                c.drawString(70, y, f"- {m}")
-                y -= 15
-        else:
-            c.drawString(50, y, f"{k}: {v}")
-            y -= 20
-
-    c.save()
-    return pdf_path
-
-
+# ========================
 # Sidebar
+# ========================
 with st.sidebar:
-    st.header("Student Session")
-    student_id = st.text_input("Student ID", value="26738", help="Enter your ID")
+    st.header("Student Control Panel")
+    student_id = st.text_input("Student ID", value=st.session_state.student_id)
     topic = st.selectbox("Select Topic", [
-        "Vector Spaces", "Linear Transformations", "Eigenvalues & Eigenvectors",
-        "Matrix Decompositions", "Inner Product Spaces", "Spectral Theorem"
-    ], index=2)
+        "Vector Spaces",
+        "Linear Transformations",
+        "Eigenvalues & Eigenvectors",
+        "Matrix Decompositions",
+        "Inner Product Spaces",
+        "Spectral Theorem"
+    ])
 
-    if st.button("Start New Session", type="primary"):
-        with st.spinner("Starting adaptive session..."):
+    if st.button("Start New Session", type="primary", use_container_width=True):
+        st.session_state.student_id = student_id
+        with st.spinner("Initializing adaptive session..."):
             resp = API.start_session(student_id, topic)
-            if "thread_id" in resp:
+            if resp and resp.get("thread_id"):
                 st.session_state.thread_id = resp["thread_id"]
-                st.session_state.student_id = student_id
-                st.success(f"Session started: `{resp['thread_id'][:8]}`")
+                st.session_state.answers = {}
+                st.session_state.last_result = None
+                st.success(f"Session Active: `{resp['thread_id'][:10]}`")
                 st.rerun()
             else:
-                st.error("Backend not ready. Is uvicorn running?")
+                st.error("Failed to start session. Is backend running?")
 
-    if st.session_state.get("thread_id"):
-        st.info(f"Active Session: `{st.session_state.thread_id[:8]}`")
+    if st.session_state.thread_id:
+        st.info(f"**Active Session**\n`{st.session_state.thread_id[:12]}...`")
 
-    # Button in sidebar
-    if st.sidebar.button("Export Student Profile (PDF)"):
-        profile = APIClient().get_profile(student_id)
-        path = export_profile_pdf(profile)
-        with open(path, "rb") as f:
-            st.sidebar.download_button(
-                label="Download Profile PDF",
-                data=f,
-                file_name="student_profile.pdf",
+    if st.button("Export Profile PDF", disabled=not st.session_state.thread_id):
+        profile = API.get_profile(student_id)
+        if profile and "mastery_map" in profile:
+            pdf = export_profile_pdf(profile)
+            st.download_button(
+                "Download Profile PDF",
+                data=pdf,
+                file_name=f"profile_{student_id}_{topic.replace(' ', '_').lower()}.pdf",
                 mime="application/pdf"
             )
 
-# Main content
-if "thread_id" not in st.session_state:
-    st.info("Start a session from the sidebar to begin learning.")
+# ========================
+# Main App Logic
+# ========================
+if not st.session_state.thread_id:
+    st.info("← Start a session from the sidebar to begin learning.")
     st.stop()
 
 thread_id = st.session_state.thread_id
-state = API.get_session_state(thread_id)
-
-import time
-
-def animated_transition(text="Loading next step...", delay=0.4):
-    ph = st.empty()
-    for dots in ["", ".", "..", "..."]:
-        ph.markdown(f"### {text}{dots}")
-        time.sleep(delay)
-    ph.empty()
-
+state = API.get_session_state(thread_id) or {}
 
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("Current Lesson")
-    if state.get("lesson_plan"):
-        for step in state.get("lesson_plan", []):
-            # Case 1 — step is a list (malformed)
-            if isinstance(step, list):
-                st.warning("⚠️ Tutor returned a malformed lesson step (list instead of dict). Showing raw data.")
-                st.json(step)
-                continue
+    st.subheader("Current Lesson Plan")
 
-            # Case 2 — step is a simple string
-            elif isinstance(step, str):
-                st.markdown("### Lesson Content")
-                st.markdown(step)
-                continue
+    lesson_plan = state.get("lesson_plan")
+    if lesson_plan and isinstance(lesson_plan, list):
+        for i, step in enumerate(lesson_plan):
+            with st.expander(f"Step {i+1}: {step.get('title', 'Untitled')}", expanded=True):
+                st.markdown(step.get("content", "No content provided."))
+    else:
+        st.info("Lesson will appear here once generated...")
 
-            # Case 3 — VALID dict step (normal execution)
-            else:
-                with st.expander(
-                    f"Step {step.get('step', '')}: {step.get('title', 'Lesson Step')}",
-                    expanded=True
-                ):
-                    st.markdown(step.get("content", ""))
-
-
-
-    st.subheader("Evaluation Questions")
+    # === QUIZ SECTION ===
     questions = state.get("questions", [])
-    answers = st.session_state.get("answers", {})
+    grading_result = state.get("grading_result")
 
-    with st.form("answers_form"):
-        for q in questions:
-            qid = q["qid"]
-            with st.expander(f"Question {qid} — {q['type'].title()}", expanded=True):
-                st.markdown(q["prompt"])
-                answers[qid] = st.text_area("Your answer", value=answers.get(qid, ""), key=f"ans_{qid}", height=120)
-        
-        submitted = st.form_submit_button("Submit Answers for SymPy + RAG Grading")
-        if submitted:
-            animated_transition("Updating lesson state")
-            payload = [{"qid": qid, "answer": ans} for qid, ans in answers.items()]
-            with st.spinner("Grading with SymPy verification..."):
-                result = API.submit_answers(thread_id, payload)
-                st.session_state.last_result = result
-                st.success("Graded! See results below.")
-                st.rerun()
+    if not questions:
+        st.warning("No questions yet.")
+        if st.button("Generate Quiz Questions", type="secondary", use_container_width=True):
+            with st.spinner("Generating adaptive questions..."):
+                # This triggers the evaluation cycle with empty answers → generates questions
+                result = API.submit_answers(thread_id, [])
+                if result and result.get("questions"):
+                    st.success("Questions generated!")
+                    st.rerun()
+                else:
+                    st.error("Failed to generate questions.")
+    else:
+        st.success(f"{len(questions)} Question(s) Ready")
+
+        with st.form("answer_form"):
+            for q in questions:
+                qid = q["qid"]
+                prompt = q["prompt"]
+                st.markdown(f"**Q{qid}:** {prompt}")
+                st.session_state.answers[qid] = st.text_area(
+                    "Your Answer",
+                    value=st.session_state.answers.get(qid, ""),
+                    key=f"input_{qid}_{thread_id}",
+                    height=120,
+                    label_visibility="collapsed"
+                )
+                st.markdown("---")
+
+            if st.form_submit_button("Submit Answers for Grading", type="primary", use_container_width=True):
+                payload = [
+                    {"qid": qid, "answer": ans.strip()}
+                    for qid, ans in st.session_state.answers.items()
+                    if ans.strip()
+                ]
+                with st.spinner("Grading your answers..."):
+                    result = API.submit_answers(thread_id, payload)
+                    st.session_state.last_result = result
+                    st.success("Grading complete!")
+                    st.rerun()
 
 with col2:
     st.subheader("Mastery Profile")
-    profile = API.get_profile(student_id)
+    profile = API.get_profile(st.session_state.student_id) or {}
     render_radar(profile.get("mastery_map", {}))
     render_misconceptions(profile.get("misconceptions", []))
 
-    if state.get("monitor_decision"):
-        action = state["monitor_decision"].get("remediation_plan", {}).get("action", "advance")
-        color = {"remedial": "red", "practice": "orange", "advance": "green"}.get(action, "gray")
-        st.markdown(f"**Next Action:** <span style='color:{color};font-size:18px'>{action.upper()}</span>", unsafe_allow_html=True)
-        dec = state["monitor_decision"]
-        plan = dec.get("remediation_plan")
+    # Monitor Decision
+    decision = state.get("monitor_decision") or {}
+    allow_advance = decision.get("allow_advance", False)
+    plan = decision.get("remediation_plan", {})
 
-        st.subheader("Remediation Path")
+    if allow_advance:
+        st.success("**Ready to Advance!**")
+    else:
+        action = plan.get("action", "review") if plan else "hold"
+        color = {"remedial": "red", "practice": "orange", "review": "blue"}.get(action, "gray")
+        st.markdown(f"**Next Step:** <span style='color:{color}'>{action.upper()}</span>", unsafe_allow_html=True)
 
-        if plan:
-            color = {
-                "remedial": "red",
-                "practice": "orange",
-                "review": "blue",
-                "accelerate": "green"
-            }.get(plan["action"], "gray")
+        if plan and plan.get("steps"):
+            st.markdown("**Recommended Path:**")
+            for step in plan["steps"]:
+                st.markdown(f"• {step}")
 
-            st.markdown(
-                f"""
-                <div style="padding:10px;border-radius:6px;
-                    border-left:6px solid {color};
-                    background-color:#f8f9fa">
-                    <b>Action:</b> {plan["action"].upper()}<br>
-                    <b>Mode:</b> {plan["recommended_tutor_mode"].title()}<br>
-                    <hr>
-                    {"<br>".join(f"• {step}" for step in plan["steps"])}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-        else:
-            st.success("No remediation needed. Student may advance.")
+    # Show latest grading
+    if st.session_state.last_result:
+        res = st.session_state.last_result
+        score = res.get("overall_score") or (res.get("grading") or {}).get("overall_score")
+        if score is not None:
+            st.metric("Latest Score", f"{float(score):.2%}")
 
+        if res.get("misconceptions"):
+            st.error("Misconceptions Detected:")
+            for m in res["misconceptions"]:
+                st.markdown(f"• {m}")
 
-        # -----------------------------------------
-        # SHOW GRADING RESULTS (if available)
-        # -----------------------------------------
-        if "last_result" in st.session_state:
-            print("Rendering last result...")
-            st.subheader("Evaluation Results")
-
-            res = st.session_state.last_result
-
-            # Show overall score
-            score = res.get("overall_score", None)
-            print(res)
-            print(score)
-            if score is not None:
-                st.metric("Overall Score", f"{score*100:.1f}%")
-
-            # Show per-question grading tables
-            grading = res.get("grading", {})
-            if grading:
-                rows = []
-                for qid, info in grading.items():
-                    rows.append({
-                        "QID": qid,
-                        "Score": info.get("score"),
-                        "Max": info.get("max")
-                    })
-                st.table(rows)
-
-            # Show misconceptions
-            misconceptions = res.get("misconceptions", [])
-            if misconceptions:
-                st.subheader("Detected Misconceptions")
-                for m in misconceptions:
-                    st.markdown(f"🔎 **{m}**")
-
-            # Show feedback summary
-            feedback = res.get("feedback", "")
-            if feedback:
-                st.info(feedback)
-
-
-# Bottom tabs
+# ========================
+# Bottom Tabs
+# ========================
 st.divider()
-tab1, tab2, tab3 = st.tabs(["Topic Prerequisite Graph", "Session Timeline", "Raw State"])
-
-import plotly.express as px
+tab1, tab2, tab3 = st.tabs(["Prerequisite Graph", "Session Timeline", "Debug State"])
 
 with tab1:
-    import pandas as pd
-    st.subheader("Mastery Heatmap")
-    mastery_map = profile.get("mastery_map", {})
-    df_heat = pd.DataFrame({
-        "Topic": list(mastery_map.keys()),
-        "Mastery": list(mastery_map.values())
-    })
-
-    fig = px.density_heatmap(
-        df_heat,
-        x="Topic",
-        y="Mastery",
-        z="Mastery",
-        color_continuous_scale="RdYlGn",
-        height=320
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.divider()
     render_topic_graph()
 
 with tab2:
@@ -285,3 +195,36 @@ with tab2:
 
 with tab3:
     st.json(state, expanded=False)
+
+
+# ========================
+# PDF Export Helper
+# ========================
+def export_profile_pdf(profile: dict) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+    except ImportError:
+        return json.dumps(profile, indent=2).encode()
+
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(50, height - 50, "Student Mastery Report")
+    c.setFont("Helvetica", 12)
+    y = height - 100
+
+    for key, value in profile.items():
+        if key == "mastery_map" and isinstance(value, dict):
+            c.drawString(50, y, "Mastery Levels:")
+            y -= 20
+            for topic, score in value.items():
+                c.drawString(70, y, f"• {topic}: {score:.3f}")
+                y -= 18
+        y -= 10
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer.read()

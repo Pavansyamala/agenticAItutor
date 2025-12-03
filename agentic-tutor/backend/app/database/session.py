@@ -3,7 +3,7 @@ from sqlmodel import create_engine, Session, SQLModel
 from pathlib import Path
 import os
 
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./dev_agentic.db")
+DB_URL = os.getenv("DATABASE_URL", "sqlite:///./database.db")
 engine = create_engine(DB_URL, echo=False)
 
 def init_db():

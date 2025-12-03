@@ -1,327 +1,99 @@
-# # backend/app/core/orchestrator.py
-# import uuid
-# from typing import Dict, Any, List, Optional
-# from backend.app.core.agent_registry import AgentRegistry
-# from backend.app.core.message_schema import AgentMessage, AgentResponse
-# from backend.app.core.llm_client import LLMClient
-
-
-# class Orchestrator:
-#     """
-#     Central orchestrator for agentic workflows.
-
-#     - Routes messages to registered agents
-#     - Enforces constraints
-#     - Uses LLMClient (Groq-powered) for any LLM needs
-#     """
-
-#     def __init__(self, registry: AgentRegistry):
-#         self.registry = registry
-#         self.llm = LLMClient(model="gpt-oss-20b")  # Groq fast model
-
-#     async def dispatch(
-#         self,
-#         to_agent: str,
-#         goal: str,
-#         goal_params: Optional[Dict[str, Any]] = None,
-#         context: Optional[Dict[str, Any]] = None,
-#         tools_allowed: Optional[List[str]] = None,
-#         constraints: Optional[Dict[str, Any]] = None,
-#     ) -> AgentResponse:
-#         """
-#         Dispatch a goal to a registered agent.
-
-#         Always merges goal_params into context["goal_params"] so all agents receive
-#         properly structured inputs.
-#         """
-
-#         goal_params = goal_params or {}
-#         context = context or {}
-#         tools_allowed = tools_allowed or []
-#         constraints = constraints or {"hard": {}, "soft": {}}
-
-#         # Ensure context has a "goal_params" block
-#         # so every agent run receives neatly packed arguments
-#         ctx_goal_params = context.get("goal_params", {})
-#         ctx_goal_params.update(goal_params)
-#         context["goal_params"] = ctx_goal_params
-
-#         # Unique ID for tracking
-#         message_id = str(uuid.uuid4())
-
-#         msg = AgentMessage(
-#             message_id=message_id,
-#             from_agent="orchestrator",
-#             to_agent=to_agent,
-#             goal=goal,
-#             goal_params=ctx_goal_params,
-#             context=context,
-#             tools_allowed=tools_allowed,
-#             hard_constraints=constraints.get("hard", {}),
-#             soft_constraints=constraints.get("soft", {}),
-#         )
-
-#         # Fetch agent instance
-#         agent = self.registry.get(to_agent)
-#         if not agent:
-#             return AgentResponse(
-#                 message_id=message_id,
-#                 status="error",
-#                 result={"error": f"Agent '{to_agent}' not found in registry."}
-#             )
-
-#         # Execute agent
-#         try:
-#             result = await agent.run(goal=goal, context=msg.dict())
-#             return AgentResponse(
-#                 message_id=message_id,
-#                 status="ok",
-#                 result=result
-#             )
-#         except Exception as e:
-#             return AgentResponse(
-#                 message_id=message_id,
-#                 status="error",
-#                 result={"error": str(e)}
-#             )
-
-
-
-# # backend/app/core/orchestrator.py
-# from typing import TypedDict, Annotated, List, Dict, Any
-# from langgraph.graph import StateGraph, END
-# from langgraph.checkpoint.sqlite import SqliteSaver
-# from backend.app.agents.tutor_agent import TutorAgent
-# from backend.app.agents.evaluator_agent import EvaluatorAgent
-# from backend.app.agents.monitor_agent import MonitorAgent
-# from backend.app.core.agent_registry import AgentRegistry
-# from backend.app.database.session import get_session
-# import uuid
-
-# # ------------------------------------------------------------------
-# # State Definition (shared across all agents)
-# # ------------------------------------------------------------------
-# class AgentState(TypedDict):
-#     student_id: str
-#     topic: str
-#     lesson_plan: Dict[str, Any]
-#     questions: List[Dict[str, Any]]
-#     student_answers: List[Dict[str, Any]]
-#     grading_result: Dict[str, Any]
-#     monitor_decision: Dict[str, Any]
-#     messages: Annotated[List[Dict[str, str]], "append"]  # for logging
-#     next: str  # routing control
-
-
-# # ------------------------------------------------------------------
-# # LangGraph Workflow
-# # ------------------------------------------------------------------
-# class Orchestrator:
-#     def __init__(self):
-#         self.registry = AgentRegistry()
-#         self.tutor = TutorAgent()
-#         self.evaluator = EvaluatorAgent()
-#         self.monitor = MonitorAgent()
-
-#         # Persist state across sessions (required for mastery tracking)
-#         memory = SqliteSaver.from_conn_string("./checkpoints.db")
-#         self.graph = self._build_graph(memory)
-
-#     def _build_graph(self, memory):
-#         workflow = StateGraph(AgentState)
-
-#         # Nodes
-#         workflow.add_node("tutor", self._call_tutor)
-#         workflow.add_node("evaluator_generate", self._call_evaluator_generate)
-#         workflow.add_node("evaluator_grade", self._call_evaluator_grade)
-#         workflow.add_node("monitor", self._call_monitor)
-
-#         # Edges
-#         workflow.set_entry_point("tutor")
-#         workflow.add_edge("tutor", "evaluator_generate")
-#         workflow.add_edge("evaluator_generate", "evaluator_grade")
-#         workflow.add_edge("evaluator_grade", "monitor")
-
-#         # Conditional routing based on monitor decision
-#         workflow.add_conditional_edges(
-#             "monitor",
-#             self._route_next,
-#             {
-#                 "remediate": "tutor",
-#                 "practice": "evaluator_generate",
-#                 "advance": END
-#             }
-#         )
-
-#         return workflow.compile(checkpointer=memory)
-
-#     # ------------------------------------------------------------------
-#     # Node Functions
-#     # ------------------------------------------------------------------
-#     async def _call_tutor(self, state: AgentState) -> Dict[str, Any]:
-#         result = await self.tutor.run(
-#             goal="teach_topic",
-#             context={
-#                 "goal_params": {
-#                     "topic": state["topic"],
-#                     "student_id": state["student_id"],
-#                     "target_mastery": 0.8
-#                 }
-#             }
-#         )
-#         return {
-#             "lesson_plan": result.get("plan", []),
-#             "messages": [{"role": "tutor", "content": "Lesson delivered"}],
-#             "next": "evaluator_generate"
-#         }
-
-#     async def _call_evaluator_generate(self, state: AgentState) -> Dict[str, Any]:
-#         result = await self.evaluator.run(
-#             goal="generate_questions",
-#             context={
-#                 "goal_params": {
-#                     "topic": state["topic"],
-#                     "q_types": ["conceptual", "procedural", "application"],
-#                     "counts": {"conceptual": 2, "procedural": 2, "application": 1},
-#                     "rag_context": ""  # will be enhanced later with real RAG
-#                 }
-#             }
-#         )
-#         questions = result.get("questions", [])
-#         return {
-#             "questions": questions,
-#             "messages": [{"role": "evaluator", "content": f"Generated {len(questions)} questions"}]
-#         }
-
-#     async def _call_evaluator_grade(self, state: AgentState) -> Dict[str, Any]:
-#         if not state.get("student_answers"):
-#             return {"grading_result": {}, "next": "monitor"}
-
-#         result = await self.evaluator.run(
-#             goal="grade_answers",
-#             context={
-#                 "goal_params": {
-#                     "eval_record": {"questions": state["questions"]},
-#                     "student_answers": state["student_answers"]
-#                 }
-#             }
-#         )
-#         return {"grading_result": result, "next": "monitor"}
-
-#     async def _call_monitor(self, state: AgentState) -> Dict[str, Any]:
-#         result = await self.monitor.run(
-#             goal="decide",
-#             context={
-#                 "goal_params": {
-#                     "student_id": state["student_id"],
-#                     "grading": state.get("grading_result", {}),
-#                     "topic": state["topic"]
-#                 }
-#             }
-#         )
-#         decision = result.get("remediation_plan", {}).get("action", "advance")
-#         route_map = {
-#             "remedial": "remediate",
-#             "practice": "practice",
-#             "review": "remediate",
-#             "revision": "remediate",
-#             "accelerate": "advance"
-#         }
-#         next_step = route_map.get(decision, "advance")
-
-#         return {
-#             "monitor_decision": result,
-#             "messages": [{"role": "monitor", "content": f"Decision: {next_step}"}],
-#             "next": next_step
-#         }
-
-#     def _route_next(self, state: AgentState) -> str:
-#         return state["next"]
-
-#     # ------------------------------------------------------------------
-#     # Public API
-#     # ------------------------------------------------------------------
-#     async def start_session(self, student_id: str, topic: str, thread_id: str = None):
-#         config = {"configurable": {"thread_id": thread_id or str(uuid.uuid4())}}
-#         initial_state = {
-#             "student_id": student_id,
-#             "topic": topic,
-#             "student_answers": [],
-#             "messages": []
-#         }
-#         async for output in self.graph.astream(initial_state, config):
-#             pass  # stream updates if needed
-#         return self.graph.get_state(config).values
-
-
 # backend/app/core/orchestrator.py
 from typing import TypedDict, Annotated, Literal, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
-# from langgraph.prebuilt import tools
 from backend.app.agents.tutor_agent import TutorAgent
 from backend.app.agents.evaluator_agent import EvaluatorAgent
 from backend.app.agents.monitor_agent import MonitorAgent
 from backend.app.database.session import get_session
-import uuid
-from uuid import uuid4
-from datetime import datetime
-import logging
-from backend.app.database.models import Event
-from backend.app.database.session import get_session
-from langgraph.checkpoint.memory import MemorySaver  # In-memory for dev (switch to SQLite later)
-import datetime
-
+from backend.app.database.models import Event, StudentProfile
+from langgraph.checkpoint.memory import MemorySaver
 from backend.app.core.rag.rag_service import RAGService
 
+import uuid
+from datetime import datetime
+import logging
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import asyncio
+
+# === RATE LIMITER IMPORT ===
+from backend.app.utils.rate_limiter import with_rate_limit
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def log_event(student_id: str, event_type: str, payload: dict, thread_id: str = None):
+    try:
+        with get_session() as session:
+            event = Event(
+                event_id=uuid.uuid4().hex,
+                student_id=student_id,
+                event_type=event_type,
+                payload={**payload, "thread_id": thread_id or "unknown"},
+                created_at=datetime.utcnow()
+            )
+            session.add(event)
+            session.commit()
+    except Exception as e:
+        logger.warning(f"Failed to log event: {e}")
 
-def log_event(student_id, event_type: str, payload: dict, thread_id: str = None ):
-    with get_session() as session:
-        event = Event(
-            event_id = uuid.uuid4().hex,
-            student_id=student_id,
-            event_type=event_type,
-            payload={**payload, "thread_id": thread_id},
-            created_at=datetime.datetime.utcnow()
-        )
-        session.add(event)
-        session.commit()
+class RateLimitError(Exception): pass
+class APIError(Exception): pass
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((RateLimitError, APIError, ConnectionError, TimeoutError)),
+)
+async def call_agent_with_retry(agent, goal: str, context: dict):
+    try:
+        result = await agent.run(goal, context)
+        if isinstance(result, dict) and any(kw in str(result).lower() for kw in ["rate limit", "429"]):
+            raise RateLimitError("Rate limit detected")
+            logger.warning(f"{agent.name} error: {result['error']} – Using fallback")
+        return result
+    except Exception as e:
+        if any(kw in str(e).lower() for kw in ["429", "rate limit"]):
+            raise RateLimitError(str(e))
+        elif "timeout" in str(e).lower():
+            raise APIError(str(e))
+        else:
+            logger.error(f"Agent {agent.__class__.__name__} failed: {e}")
+            return get_fallback_response(agent.__class__.__name__, goal)
+
+def get_fallback_response(agent_name: str, goal: str) -> Dict[str, Any]:
+    fallbacks = {
+        "TutorAgent": {"plan": [{"title": "Core Review", "content": "Please review your notes on this topic."}], "metadata": {"fallback": True}},
+        "EvaluatorAgent": {"questions": [{"qid": "fb1", "prompt": "Explain the main concept.", "rubric": {"full_marks": 10}}]} if goal == "generate_questions" else {"overall_score": 0.6, "misconceptions": ["Using fallback grading"]},
+        "MonitorAgent": {"allow_advance": False, "remediation_plan": {"action": "review", "steps": ["Re-read lesson"]}} }
+    return fallbacks.get(agent_name, fallbacks["MonitorAgent"])
 
 # =================================================================
-# 1. Shared State — passed between all agents (LangGraph requirement)
+# 1. Shared State
 # =================================================================
 class AgentState(TypedDict):
     student_id: str
     topic: str
     thread_id: str
+    lesson_only: bool
 
-    # Tutor outputs
     lesson_plan: Optional[List[Dict[str, Any]]]
     tutor_messages: Annotated[List[Dict], "append"]
 
-    # Evaluator outputs
     questions: Optional[List[Dict[str, Any]]]
     student_answers: Optional[List[Dict[str, Any]]]
     grading_result: Optional[Dict[str, Any]]
 
-    # Monitor outputs
     monitor_decision: Optional[Dict[str, Any]]
     allow_advance: bool
     remediation_plan: Optional[Dict[str, Any]]
-    next_action: Literal["teach", "evaluate", "remediate", "advance"]
 
-    # RAG context (shared across agents)
     rag_context: str
-
-    # History
     messages: Annotated[List[Dict[str, str]], "append"]
+    profile_snapshot: Optional[Dict[str, Any]]
 
 
 # =================================================================
-# 2. LangGraph Orchestrator — FULLY STATEFUL + CONDITIONAL EDGES
+# 2. Orchestrator
 # =================================================================
 class Orchestrator:
     def __init__(self):
@@ -329,240 +101,205 @@ class Orchestrator:
         self.evaluator = EvaluatorAgent()
         self.monitor = MonitorAgent()
 
-        # Inside __init__
-        RAGService.initialize()  # Load curriculum at startup
-
-        # Persistent checkpointing (required for long-term mastery)
+        asyncio.create_task(self._init_rag())
         self.memory = MemorySaver()
         self.graph = self._build_graph()
 
+    async def _init_rag(self):
+        try:
+            await asyncio.to_thread(RAGService.initialize)
+            logger.info("RAG Service initialized")
+        except Exception as e:
+            logger.error(f"RAG init failed: {e}")
+
     def _build_graph(self):
         workflow = StateGraph(AgentState)
-
-        # Nodes
         workflow.add_node("tutor", self.tutor_node)
         workflow.add_node("generate_questions", self.generate_questions_node)
         workflow.add_node("grade_answers", self.grade_answers_node)
         workflow.add_node("monitor", self.monitor_node)
 
-        # Entry → Tutor
         workflow.set_entry_point("tutor")
 
+        workflow.add_conditional_edges(
+            "tutor",
+            lambda state: END if state.get("lesson_only", False) else "generate_questions",
+            {END: END, "generate_questions": "generate_questions"}
+        )
 
-        # Fixed flow
-        workflow.add_edge("tutor", "generate_questions")
         workflow.add_edge("generate_questions", "grade_answers")
         workflow.add_edge("grade_answers", "monitor")
 
-        # Conditional routing based on Monitor decision
         workflow.add_conditional_edges(
             "monitor",
-            self.decide_next,
-            {
-                "teach": "tutor",
-                "remediate": "tutor",
-                "evaluate": "generate_questions",
-                "advance": END
-            }
+            self._route_after_monitor,
+            {"advance": END, "teach": "tutor", "remediate": "tutor", "evaluate": "generate_questions"}
         )
 
         return workflow.compile(checkpointer=self.memory)
-        
 
     # =================================================================
-    # Node Implementations
+    # RATE-LIMITED AGENT CALLS
+    # =================================================================
+    @with_rate_limit
+    async def _call_tutor(self, context: dict):
+        return await call_agent_with_retry(self.tutor, "teach_topic", context)
+
+    @with_rate_limit
+    async def _call_evaluator(self, goal: str, context: dict):
+        return await call_agent_with_retry(self.evaluator, goal, context)
+
+    @with_rate_limit
+    async def _call_monitor(self, context: dict):
+        return await call_agent_with_retry(self.monitor, "decide", context)
+
+    # =================================================================
+    # Nodes
     # =================================================================
     async def tutor_node(self, state: AgentState) -> Dict[str, Any]:
-        # 1. Get clean, focused RAG context
-        rag_context = RAGService.get_context(
-            query=f"explain {state['topic']} with examples and common misconceptions",
-            use_tavily=True
-        )
+        profile = state.get("profile_snapshot") or await self._get_profile(state["student_id"])
+        rag_context = RAGService.get_context(f"explain {state['topic']} with examples", use_tavily=False)
 
-        # 2. Pass it PROPERLY — as embedded_context (exactly as your Evaluator does)
-        result = await self.tutor.run(
-            goal="teach_topic",
-            context={
-                "goal_params": {
-                    "topic": state["topic"],           # ← Keep topic clean
-                    "student_id": state["student_id"],
-                    "target_mastery": 0.8,
-                    "embedded_context": rag_context     # ← THIS is how you inject RAG
-                }
+        result = await self._call_tutor({
+            "goal_params": {
+                "topic": state["topic"],
+                "student_profile": profile,
+                "embedded_context": rag_context
             }
-        )
+        })
 
-        log_event(state["student_id"], "lesson_delivered", {
-        "topic": state["topic"],
-        "steps": len(result.get("plan", []))}, state["thread_id"]) 
+        log_event(state["student_id"], "lesson_delivered", {"topic": state["topic"]}, state["thread_id"])   
 
         return {
             "lesson_plan": result.get("plan"),
-            "tutor_messages": [{"role": "tutor", "content": "RAG-grounded lesson delivered"}],
-            "messages": [{"role": "system", "content": f"Taught {state['topic']} with RAG context"}],
-            "rag_context": rag_context  # optional: store for debugging
+            "tutor_messages": [{"role": "tutor", "content": "Lesson ready"}],
+            "rag_context": rag_context,
+            "profile_snapshot": profile,
+            "messages": [{"role": "system", "content": f"Taught {state['topic']}"}]
         }
 
     async def generate_questions_node(self, state: AgentState) -> Dict[str, Any]:
-        rag_context = RAGService.get_context(state["topic"], use_tavily=True)
-        
-        result = await self.evaluator.run(
-            goal="generate_questions",
-            context={"goal_params": {
+        rag_context = RAGService.get_context(state["topic"], use_tavily=False)
+
+        result = await self._call_evaluator("generate_questions", {
+            "goal_params": {
                 "topic": state["topic"],
-                "q_types": ["conceptual", "procedural", "application", "open-ended"],
-                "counts": {"conceptual": 2, "procedural": 2, "application": 1, "open-ended": 1},
-                "embedded_context": rag_context  # ← NOW INJECTED
-            }}
-        )
+                "embedded_context": rag_context
+            }
+        })
 
-        print(result.get("questions", []))
-        raw_questions = result.get("questions", [])
+        questions = result.get("questions", [])[:3] or [
+            {"qid": "fb1", "prompt": f"Explain {state['topic']} in your own words.", "type": "conceptual"}
+        ]
 
-        questions = []
-        for q in raw_questions:
-            if (
-                isinstance(q, dict)
-                and "qid" in q
-                and "type" in q
-                and "prompt" in q
-                and "expected_solution" in q
-                and "rubric" in q
-            ):
-                questions.append(q)
-            else:
-                logger.warning(f"[Evaluator Warning] Dropped malformed question item: {q}")
-        
-        log_event(
-            state["student_id"],
-            "questions_generated",
-            {
-                "count": len(questions),
-                "types": list({q["type"] for q in questions}) if questions else []
-            },
-            state["thread_id"]
-        )
+        log_event(state["student_id"], "questions_generated", {"count": len(questions)}, state["thread_id"])
 
-        
         return {
             "questions": questions,
             "rag_context": rag_context,
-            "messages": [{"role": "rag", "content": "RAG context injected"}]
+            "messages": [{"role": "evaluator", "content": f"{len(questions)} questions generated"}]
         }
 
     async def grade_answers_node(self, state: AgentState) -> Dict[str, Any]:
         if not state.get("student_answers"):
-            return {"grading_result": None}
+            return {"grading_result": {"overall_score": 0.0}}
 
-        result = await self.evaluator.run(
-            goal="grade_answers",
-            context={"goal_params": {
+        result = await self._call_evaluator("grade_answers", {
+            "goal_params": {
                 "eval_record": {"questions": state["questions"]},
                 "student_answers": state["student_answers"]
-            }}
-        )
+            }
+        })
 
-        log_event(state["student_id"], "answers_graded", {
-        "overall_score": result.get("overall_score", 0),
-        "questions_count": len(result.get("grading", {})),
-        "sympy_used": sum(1 for q in result.get("grading", {}).values() if q.get("sympy_used"))}, state["thread_id"])
-        return {
-            "grading_result": result,
-            "messages": [{"role": "evaluator", "content": "Answers graded"}]
-        }
+        log_event(state["student_id"], "answers_graded", {"score": result.get("overall_score", 0)}, state["thread_id"])
+        return {"grading_result": result}
 
     async def monitor_node(self, state: AgentState) -> Dict[str, Any]:
-        result = await self.monitor.run(
-            goal="decide",
-            context={"goal_params": {
-                "student_id": state["student_id"],
-                "grading": state.get("grading_result", {}),
-                "topic": state["topic"]
-            }}
-        )
+        grading = state.get("grading_result") or {}
+        score = grading.get("overall_score", 0.0)
+        profile = state.get("profile_snapshot") or await self._get_profile(state["student_id"])
 
-        decision = result.get("remediation_plan", {})
-        action = decision.get("action", "advance")
-        allow_advance = result.get("allow_advance", True)
-
-        log_event(state["student_id"], "monitor_decision", {
-        "action": action,
-        "allow_advance": result.get("allow_advance", True),
-        "misconceptions": result.get("misconceptions", [])}, state["thread_id"])
-
-        next_map = {
-            "remedial": "remediate",
-            "practice": "evaluate",
-            "review": "teach",
-            "revision": "teach",
-            "accelerate": "advance"
-        }
-        next_step = next_map.get(action, "advance" if allow_advance else "remediate")
-
-        retry_count = state.get("messages", []).count({"role": "monitor", "content": "Decision: remediate"}) if isinstance(state.get("messages"), list) else 0
-        # Alternatively track a numeric counter in state like state.get("remediate_retries", 0)
-        if retry_count >= 4:
-            # force escalate or advance to break loop
-            return {
-                "allow_advance": False,
-                "remediation_plan": {
-                    "action": "remedial",
-                    "steps": ["Please schedule human intervention."],
-                    "recommended_tutor_mode": "revision"
-                },
-                "escalate": True,
-                "notes_for_teacher": "Multiple remediation cycles detected — escalate to human."
+        result = await self._call_monitor({
+            "goal_params": {
+                "eval_summary": {"overall_score": score, "misconceptions": grading.get("misconceptions", [])},
+                "profile_snapshot": profile
             }
+        }) or {"allow_advance": score >= 0.8}
+
+        allow_advance = bool(result.get("allow_advance", False))
+        remediation = result.get("remediation_plan", {})
+        action = remediation.get("action", "review") if isinstance(remediation, dict) else "review"
+        next_route = "advance" if allow_advance else {"practice": "evaluate", "remedial": "remediate"}.get(action, "teach")
+
+        log_event(state["student_id"], "monitor_decision", {"allow_advance": allow_advance}, state["thread_id"])
 
         return {
             "monitor_decision": result,
             "allow_advance": allow_advance,
-            "remediation_plan": decision,
-            "next_action": next_step,
-            "messages": [{"role": "monitor", "content": f"Decision: {next_step}"}]
+            "remediation_plan": remediation,
+            "messages": [{"role": "monitor", "content": f"Decision: {next_route}"}]
         }
 
-    def decide_next(self, state: AgentState) -> str:
-        return state["next_action"]
+    def _route_after_monitor(self, state: AgentState) -> str:
+        if state.get("allow_advance"):
+            return "advance"
+        action = (state.get("monitor_decision") or {}).get("remediation_plan", {}).get("action", "review")
+        return {"practice": "evaluate", "remedial": "remediate"}.get(action, "teach")
+
+    async def _get_profile(self, student_id: str) -> dict:
+        try:
+            with get_session() as session:
+                profile = session.query(StudentProfile).filter(StudentProfile.student_id == student_id).first()
+                if not profile:
+                    return {"student_id": student_id, "mastery_map": {}, "misconceptions": []}
+                return {
+                    "student_id": profile.student_id,
+                    "mastery_map": profile.mastery_map or {},
+                    "misconceptions": profile.misconceptions or [],
+                    "overall_score": profile.overall_score or 0.0,
+                    "learning_preferences": profile.learning_preferences or {}
+                }
+        except Exception as e:
+            logger.warning(f"Profile error: {e}")
+            return {"student_id": student_id, "mastery_map": {}, "misconceptions": []}
 
     # =================================================================
-    # Public Methods — Used by main.py
+    # Public API
     # =================================================================
-    async def start_session(self, student_id: str, topic: str, thread_id: str = None):
-        thread_id = f"{student_id}_{uuid.uuid4().hex}"   # 100% safe, no spaces, no &
-        config = {"configurable": {"thread_id": thread_id},"recursion_limit": 5}
-        log_event(student_id, "session_started", {"topic": topic}, thread_id)
+    async def start_session(self, student_id: str, topic: str) -> dict:
+        thread_id = f"{student_id}_{uuid.uuid4().hex[:8]}"
+        config = {"configurable": {"thread_id": thread_id}}
 
         initial_state = {
-            "student_id": student_id,
-            "topic": topic,
-            "thread_id": thread_id,
-            "student_answers": [],
-            "rag_context": "",
-            "messages": [],
-            "tutor_messages": []
+            "student_id": student_id, "topic": topic, "thread_id": thread_id,
+            "lesson_only": True, "student_answers": [], "questions": [], "messages": [],
+            "profile_snapshot": await self._get_profile(student_id)
         }
 
-        async for output in self.graph.astream(initial_state, config):
-            pass  # Can stream to frontend later
+        log_event(student_id, "session_started", {"topic": topic}, thread_id)
+        result = await self.graph.ainvoke(initial_state, config)
 
-        return {"thread_id": thread_id, "status": "session_started"}
+        return {"thread_id": thread_id, "lesson_plan": result.get("lesson_plan"), "status": "lesson_ready"}
 
-    async def submit_answers(self, thread_id: str, answers: List[Dict]):
-        config = {"configurable": {"thread_id": thread_id},"recursion_limit": 6}
-        current = self.graph.get_state(config).values
-        updated = {**current, "student_answers": answers}
+    async def submit_answers(self, thread_id: str, answers: List[Dict]) -> dict:
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = self.graph.get_state(config)
+        if not snapshot or not snapshot.values:
+            return {"status": "error", "error": "Session not found"}
 
-        async for output in self.graph.astream(updated, config):
-            pass
+        current = snapshot.values.copy()
+        current.update({"student_answers": answers, "lesson_only": False})
 
-        final = self.graph.get_state(config).values
+        final_state = await self.graph.ainvoke(current, config)
+
         return {
-            "grading": final.get("grading_result"),
-            "decision": final.get("monitor_decision"),
-            "next_action": final["next_action"]
+            "status": "success",
+            "questions": final_state.get("questions"),
+            "grading": final_state.get("grading_result"),
+            "decision": final_state.get("monitor_decision"),
+            "next_action": "advance" if final_state.get("allow_advance") else "continue"
         }
 
     def get_state(self, thread_id: str):
-        config = {"configurable": {"thread_id": thread_id}}
-        return self.graph.get_state(config).values
+        state = self.graph.get_state({"configurable": {"thread_id": thread_id}})
+        return state.values if state else None
